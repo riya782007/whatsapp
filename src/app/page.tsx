@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import AdBanner from "@/components/AdBanner";
 
+type Language = "hindi" | "hinglish" | "english";
+
 interface Poll {
   question: string;
   options: string[];
@@ -16,7 +18,29 @@ interface Result {
   poll: Poll | null;
 }
 
+const LANGUAGE_CONFIG: Record<Language, { label: string; flag: string; sublabel: string; color: string }> = {
+  hindi: {
+    label: "हिंदी",
+    flag: "🇮🇳",
+    sublabel: "Hindi",
+    color: "from-orange-500 to-orange-600",
+  },
+  hinglish: {
+    label: "HIN+ENG",
+    flag: "🔀",
+    sublabel: "Hinglish",
+    color: "from-green-500 to-emerald-600",
+  },
+  english: {
+    label: "English",
+    flag: "🇬🇧",
+    sublabel: "English",
+    color: "from-blue-500 to-blue-600",
+  },
+};
+
 export default function Home() {
+  const [language, setLanguage] = useState<Language>("hinglish");
   const [status, setStatus] = useState<"idle" | "recording" | "processing" | "success" | "error">("idle");
   const [transcript, setTranscript] = useState("");
   const [result, setResult] = useState<Result | null>(null);
@@ -67,6 +91,7 @@ export default function Home() {
       mediaRecorder.start();
       setStatus("recording");
       setError("");
+      setResult(null);
     } catch (err) {
       setError("Microphone access denied. Please check your browser settings.");
       setStatus("error");
@@ -76,14 +101,17 @@ export default function Home() {
   const stopRecording = () => {
     if (mediaRecorderRef.current && status === "recording") {
       mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
       setStatus("processing");
     }
   };
 
   const processAudio = async (audioBlob: Blob) => {
     try {
+      // Step 1 — Transcribe with language hint
       const formData = new FormData();
       formData.append("file", audioBlob, "recording.webm");
+      formData.append("language", language);
 
       const transcribeRes = await fetch("/api/transcribe", {
         method: "POST",
@@ -94,28 +122,31 @@ export default function Home() {
         const errData = await transcribeRes.json();
         throw new Error(errData.error || "Transcription failed");
       }
-      
+
       const { text } = await transcribeRes.json();
       setTranscript(text);
 
+      // Step 2 — Format with language-specific AI prompt
       const generateRes = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text }),
+        body: JSON.stringify({ transcript: text, language }),
       });
 
       if (!generateRes.ok) {
         const errData = await generateRes.json();
         throw new Error(errData.error || "Formatting failed");
       }
-      
+
       const resultData = await generateRes.json();
       setResult(resultData);
       setStatus("success");
     } catch (err: any) {
-      setError(err.message.includes("quota") 
-        ? "API Limit Reached: Please check your OpenAI billing/credits." 
-        : err.message || "An unexpected error occurred.");
+      setError(
+        err.message.includes("quota")
+          ? "API Limit Reached: Please check your API billing/credits."
+          : err.message || "An unexpected error occurred."
+      );
       setStatus("error");
     }
   };
@@ -130,6 +161,15 @@ export default function Home() {
     const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
     window.open(url, "_blank");
   };
+
+  const handleReset = () => {
+    setStatus("idle");
+    setResult(null);
+    setTranscript("");
+    setError("");
+  };
+
+  const activeConfig = LANGUAGE_CONFIG[language];
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#0F1115] text-zinc-900 dark:text-zinc-100 font-sans selection:bg-green-500/30">
@@ -151,31 +191,90 @@ export default function Home() {
 
       <main className="max-w-3xl mx-auto px-6 py-12">
         {/* Hero Section */}
-        <section className="text-center mb-12">
+        <section className="text-center mb-10">
           <h2 className="text-4xl font-extrabold tracking-tight mb-4 sm:text-5xl">
             Speech to <span className="text-green-500">Structured</span>
           </h2>
           <p className="text-zinc-500 dark:text-zinc-400 text-lg max-w-lg mx-auto">
-            Convert your Hinglish voice notes into polished WhatsApp updates and polls in seconds.
+            Convert your voice notes into polished WhatsApp messages — in Hindi, Hinglish, or English.
           </p>
         </section>
 
-        {/* Ad — Below Hero */}
-        <AdBanner slot="1234567890" format="horizontal" className="mb-10 rounded-2xl overflow-hidden" />
+        {/* ── Language Switcher ── */}
+        <div className="mb-8">
+          <p className="text-center text-xs font-bold uppercase tracking-widest text-zinc-400 mb-3">
+            Output Language
+          </p>
+          <div className="flex items-center justify-center gap-3">
+            {(Object.keys(LANGUAGE_CONFIG) as Language[]).map((lang) => {
+              const cfg = LANGUAGE_CONFIG[lang];
+              const isActive = language === lang;
+              return (
+                <motion.button
+                  key={lang}
+                  onClick={() => {
+                    setLanguage(lang);
+                    // reset result when language changes so user re-records
+                    if (status === "success") handleReset();
+                  }}
+                  whileTap={{ scale: 0.95 }}
+                  className={cn(
+                    "flex flex-col items-center gap-1 px-5 py-3 rounded-2xl border-2 font-semibold text-sm transition-all duration-200 min-w-[90px]",
+                    isActive
+                      ? `bg-gradient-to-br ${cfg.color} text-white border-transparent shadow-lg`
+                      : "bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700 hover:border-zinc-400"
+                  )}
+                >
+                  <span className="text-xl">{cfg.flag}</span>
+                  <span className={cn("text-xs font-bold", isActive ? "text-white/90" : "")}>
+                    {cfg.sublabel}
+                  </span>
+                </motion.button>
+              );
+            })}
+          </div>
+
+          {/* Active language description */}
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={language}
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              className="text-center text-xs text-zinc-400 mt-3"
+            >
+              {language === "hindi" && "🎙 Speak in Hindi → message in हिंदी (Devanagari)"}
+              {language === "hinglish" && "🎙 Speak in Hinglish → message in Hinglish (Roman Hindi + English)"}
+              {language === "english" && "🎙 Speak in English → professionally formatted English message"}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+
+        {/* Ad — Below Language Switcher */}
+        <AdBanner slot="1234567890" format="horizontal" className="mb-8 rounded-2xl overflow-hidden" />
 
         {/* Recording Interface */}
         <div className="relative group">
-          <div className="absolute -inset-1 bg-gradient-to-r from-green-500 to-emerald-600 rounded-[2rem] blur opacity-25 group-hover:opacity-40 transition duration-1000"></div>
+          <div
+            className={cn(
+              "absolute -inset-1 bg-gradient-to-r rounded-[2rem] blur opacity-25 group-hover:opacity-40 transition duration-1000",
+              activeConfig.color
+            )}
+          />
           <div className="relative bg-white dark:bg-zinc-900 rounded-[2rem] border border-zinc-200 dark:border-zinc-800 p-8 shadow-xl">
-            
             <div className="flex flex-col items-center gap-8 py-6">
-              {/* Visualizer Placeholder */}
+
+              {/* Audio Visualizer */}
               <div className="flex items-end gap-1 h-12">
-                {[...Array(12)].map((_, i) => (
+                {[...Array(14)].map((_, i) => (
                   <motion.div
                     key={i}
-                    animate={status === "recording" ? { height: [10, 40, 15, 30, 10] } : { height: 10 }}
-                    transition={{ repeat: Infinity, duration: 0.8, delay: i * 0.05 }}
+                    animate={
+                      status === "recording"
+                        ? { height: [8, 36 + Math.random() * 10, 12, 32, 8] }
+                        : { height: 8 }
+                    }
+                    transition={{ repeat: Infinity, duration: 0.7 + i * 0.03, delay: i * 0.04 }}
                     className={cn(
                       "w-1.5 rounded-full",
                       status === "recording" ? "bg-green-500" : "bg-zinc-200 dark:bg-zinc-700"
@@ -184,6 +283,7 @@ export default function Home() {
                 ))}
               </div>
 
+              {/* Mic Button */}
               <div className="relative">
                 <AnimatePresence mode="wait">
                   {status === "recording" ? (
@@ -205,7 +305,12 @@ export default function Home() {
                       exit={{ scale: 0.8, opacity: 0 }}
                       disabled={status === "processing"}
                       onClick={startRecording}
-                      className="w-24 h-24 rounded-full bg-green-500 disabled:bg-zinc-300 dark:disabled:bg-zinc-800 flex items-center justify-center shadow-2xl shadow-green-500/40 relative z-10 hover:bg-green-600 transition-colors"
+                      className={cn(
+                        "w-24 h-24 rounded-full flex items-center justify-center shadow-2xl relative z-10 transition-colors",
+                        status === "processing"
+                          ? "bg-zinc-300 dark:bg-zinc-800"
+                          : `bg-gradient-to-br ${activeConfig.color} hover:opacity-90 shadow-green-500/30`
+                      )}
                     >
                       {status === "processing" ? (
                         <Loader2 className="w-10 h-10 text-white animate-spin" />
@@ -215,24 +320,27 @@ export default function Home() {
                     </motion.button>
                   )}
                 </AnimatePresence>
-                
+
                 {status === "recording" && (
                   <div className="absolute -inset-4 border-2 border-red-500 rounded-full animate-ping opacity-20" />
                 )}
               </div>
 
+              {/* Status Text */}
               <div className="text-center space-y-2">
-                <p className={cn(
-                  "text-2xl font-mono font-bold tracking-tighter",
-                  status === "recording" ? "text-red-500" : "text-zinc-400"
-                )}>
+                <p
+                  className={cn(
+                    "text-2xl font-mono font-bold tracking-tighter",
+                    status === "recording" ? "text-red-500" : "text-zinc-400"
+                  )}
+                >
                   {formatTime(recordTime)}
                 </p>
                 <p className="text-sm font-medium text-zinc-500 uppercase tracking-widest">
-                  {status === "idle" && "Tap to record"}
-                  {status === "recording" && "Recording..."}
+                  {status === "idle" && `Tap to record in ${activeConfig.sublabel}`}
+                  {status === "recording" && `Recording in ${activeConfig.sublabel}...`}
                   {status === "processing" && "AI is thinking..."}
-                  {status === "success" && "Success!"}
+                  {status === "success" && "Done! ✓"}
                   {status === "error" && "Error"}
                 </p>
               </div>
@@ -247,7 +355,7 @@ export default function Home() {
                   exit={{ height: 0, opacity: 0 }}
                   className="mt-6 p-4 bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/30 rounded-2xl flex items-start gap-3 text-red-600 dark:text-red-400 text-sm"
                 >
-                  <AlertCircle className="w-5 h-5 shrink-0" />
+                  <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
                   <div>
                     <p className="font-semibold mb-1">Something went wrong</p>
                     <p className="opacity-80">{error}</p>
@@ -267,25 +375,51 @@ export default function Home() {
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-6"
               >
+                {/* Raw Transcript (collapsible) */}
+                {transcript && (
+                  <details className="group bg-zinc-50 dark:bg-zinc-800/50 rounded-2xl border border-zinc-200 dark:border-zinc-700 px-5 py-3 cursor-pointer">
+                    <summary className="text-xs font-bold uppercase tracking-widest text-zinc-400 list-none flex items-center justify-between">
+                      <span>Raw Transcript</span>
+                      <span className="group-open:rotate-180 transition-transform">▾</span>
+                    </summary>
+                    <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed italic">
+                      {transcript}
+                    </p>
+                  </details>
+                )}
+
                 {/* Formatted Message */}
-                <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-lg shadow-zinc-200/50 dark:shadow-none">
+                <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-lg">
                   <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/50 dark:bg-zinc-800/50">
-                    <span className="text-xs font-bold uppercase tracking-widest text-zinc-400">Formatted Message</span>
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={() => handleCopy(result.formattedMessage)}
-                        className="p-2 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg transition-colors relative"
-                      >
-                        {copySuccess ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4 text-zinc-500" />}
-                      </button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{activeConfig.flag}</span>
+                      <span className="text-xs font-bold uppercase tracking-widest text-zinc-400">
+                        {activeConfig.sublabel} Message
+                      </span>
                     </div>
+                    <button
+                      onClick={() => handleCopy(result.formattedMessage)}
+                      className="p-2 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg transition-colors"
+                    >
+                      {copySuccess ? (
+                        <Check className="w-4 h-4 text-green-500" />
+                      ) : (
+                        <Copy className="w-4 h-4 text-zinc-500" />
+                      )}
+                    </button>
                   </div>
                   <div className="p-8">
-                    <p className="whitespace-pre-wrap text-zinc-800 dark:text-zinc-200 leading-relaxed text-lg italic">
+                    <p
+                      className={cn(
+                        "whitespace-pre-wrap leading-relaxed text-lg",
+                        "text-zinc-800 dark:text-zinc-200",
+                        language === "hindi" ? "font-normal" : "italic"
+                      )}
+                    >
                       {result.formattedMessage}
                     </p>
                     <div className="mt-8 pt-8 border-t border-zinc-100 dark:border-zinc-800">
-                      <button 
+                      <button
                         onClick={() => handleShare(result.formattedMessage)}
                         className="w-full h-14 bg-[#25D366] hover:bg-[#22c35e] text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-lg shadow-green-500/20"
                       >
@@ -298,25 +432,32 @@ export default function Home() {
 
                 {/* Poll Section */}
                 {result.poll && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     className="bg-blue-50 dark:bg-blue-950/10 rounded-3xl border border-blue-100 dark:border-blue-900/30 overflow-hidden"
                   >
                     <div className="p-8">
-                      <div className="flex items-center gap-2 text-blue-500 mb-6">
-                        <Check className="w-5 h-5" />
-                        <span className="text-xs font-bold uppercase tracking-widest">Suggested WhatsApp Poll</span>
+                      <div className="flex items-center gap-2 text-blue-500 mb-4">
+                        <span className="text-lg">📊</span>
+                        <span className="text-xs font-bold uppercase tracking-widest">
+                          Suggested WhatsApp Poll
+                        </span>
                       </div>
-                      <h3 className="text-xl font-bold text-blue-900 dark:text-blue-200 mb-6">{result.poll.question}</h3>
+                      <h3 className="text-xl font-bold text-blue-900 dark:text-blue-200 mb-5">
+                        {result.poll.question}
+                      </h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {result.poll.options.map((opt, i) => (
-                          <div key={i} className="px-5 py-4 bg-white/80 dark:bg-blue-900/20 rounded-2xl text-sm font-semibold text-blue-800 dark:text-blue-300 border border-blue-100 dark:border-blue-800/30 shadow-sm">
+                          <div
+                            key={i}
+                            className="px-5 py-4 bg-white/80 dark:bg-blue-900/20 rounded-2xl text-sm font-semibold text-blue-800 dark:text-blue-300 border border-blue-100 dark:border-blue-800/30 shadow-sm"
+                          >
                             {opt}
                           </div>
                         ))}
                       </div>
-                      <p className="text-xs text-blue-400 mt-6 italic">
+                      <p className="text-xs text-blue-400 mt-5 italic">
                         * Open WhatsApp → Attach → Poll to create this.
                       </p>
                     </div>
@@ -327,10 +468,10 @@ export default function Home() {
                 <AdBanner slot="0987654321" format="rectangle" className="rounded-2xl overflow-hidden" />
 
                 {/* Record Again */}
-                <div className="text-center pt-8">
-                  <button 
-                    onClick={() => setStatus("idle")}
-                    className="text-zinc-400 hover:text-zinc-600 text-sm font-medium flex items-center gap-2 mx-auto"
+                <div className="text-center pt-4">
+                  <button
+                    onClick={handleReset}
+                    className="text-zinc-400 hover:text-zinc-600 text-sm font-medium flex items-center gap-2 mx-auto transition-colors"
                   >
                     <RefreshCw className="w-4 h-4" />
                     Record Another
