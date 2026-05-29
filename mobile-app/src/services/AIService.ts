@@ -1,8 +1,9 @@
 import axios from 'axios';
-import { Audio } from 'expo-av';
 
-// Replace with your actual deployed backend URL or local IP for testing
-const API_BASE_URL = 'http://YOUR_LOCAL_IP:3000/api'; 
+// Production: points to your deployed Vercel web app
+// Replace this with your actual Vercel URL after deploying the web app
+// e.g. https://voice2wa.vercel.app/api
+const API_BASE_URL = 'https://voice2wa.vercel.app/api';
 
 export interface AIResult {
   formattedMessage: string;
@@ -24,22 +25,24 @@ export class AIService {
         name: 'recording.m4a',
       });
 
-      // 2. Transcribe using our existing backend logic
-      // In a production keyboard, we'd hit the API directly
+      // 2. Transcribe
       const transcribeRes = await axios.post(`${API_BASE_URL}/transcribe`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 30000,
       });
 
       const transcript = transcribeRes.data.text;
 
       // 3. Generate Professional Message
       const generateRes = await axios.post(`${API_BASE_URL}/generate`, {
-        transcript: transcript,
+        transcript,
+      }, {
+        timeout: 30000,
       });
 
       return generateRes.data;
-    } catch (error) {
-      console.error('AI Processing Error:', error);
+    } catch (error: any) {
+      console.error('AI Processing Error:', error?.message || error);
       throw error;
     }
   }

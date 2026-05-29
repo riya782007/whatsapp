@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { Mic, Square, Copy, Share2, MessageSquare, AlertCircle, Check, Loader2, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
+import AdBanner from "@/components/AdBanner";
 
 interface Poll {
   question: string;
@@ -158,6 +159,9 @@ export default function Home() {
             Convert your Hinglish voice notes into polished WhatsApp updates and polls in seconds.
           </p>
         </section>
+
+        {/* Ad — Below Hero */}
+        <AdBanner slot="1234567890" format="horizontal" className="mb-10 rounded-2xl overflow-hidden" />
 
         {/* Recording Interface */}
         <div className="relative group">
@@ -319,7 +323,10 @@ export default function Home() {
                   </motion.div>
                 )}
 
-                {/* Debug Transcript */}
+                {/* Ad — Below Results */}
+                <AdBanner slot="0987654321" format="rectangle" className="rounded-2xl overflow-hidden" />
+
+                {/* Record Again */}
                 <div className="text-center pt-8">
                   <button 
                     onClick={() => setStatus("idle")}
