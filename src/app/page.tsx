@@ -1,69 +1,87 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Mic, Square, Copy, Share2, MessageSquare, AlertCircle, Check, Loader2, RefreshCw } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  Mic,
+  Square,
+  Copy,
+  MessageSquare,
+  AlertCircle,
+  Check,
+  Loader2,
+  RefreshCw,
+  Clock,
+  Crown,
+  Sparkles,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { cn } from "@/lib/utils";
+import { cn, errorMessage } from "@/lib/utils";
 import AdBanner from "@/components/AdBanner";
+import TonePicker from "@/components/TonePicker";
+import ShareMenu from "@/components/ShareMenu";
+import PaywallModal from "@/components/PaywallModal";
+import HistoryPanel from "@/components/HistoryPanel";
+import {
+  Language,
+  Tone,
+  Result,
+  LANGUAGE_CONFIG,
+  FREE_DAILY_LIMIT,
+} from "@/lib/config";
+import {
+  canGenerate,
+  getRemaining,
+  incrementUsage,
+  isPro as checkIsPro,
+} from "@/lib/usage";
+import { HistoryItem, getHistory, addHistory } from "@/lib/history";
 
-type Language = "hindi" | "hinglish" | "english";
-
-interface Poll {
-  question: string;
-  options: string[];
-}
-
-interface Result {
-  formattedMessage: string;
-  poll: Poll | null;
-}
-
-const LANGUAGE_CONFIG: Record<Language, { label: string; flag: string; sublabel: string; color: string }> = {
-  hindi: {
-    label: "हिंदी",
-    flag: "🇮🇳",
-    sublabel: "Hindi",
-    color: "from-orange-500 to-orange-600",
-  },
-  hinglish: {
-    label: "HIN+ENG",
-    flag: "🔀",
-    sublabel: "Hinglish",
-    color: "from-green-500 to-emerald-600",
-  },
-  english: {
-    label: "English",
-    flag: "🇬🇧",
-    sublabel: "English",
-    color: "from-blue-500 to-blue-600",
-  },
-};
+// Deterministic peak heights for the audio visualizer bars (avoids
+// calling Math.random during render, which React flags as impure).
+const BAR_PEAKS = [40, 44, 38, 46, 41, 45, 39, 43, 47, 40, 42, 46, 38, 44];
 
 export default function Home() {
-  const [language, setLanguage] = useState<Language>("hinglish");
+  const [language, setLanguage] = useState<Language>("auto");
+  const [tone, setTone] = useState<Tone>("general");
   const [status, setStatus] = useState<"idle" | "recording" | "processing" | "success" | "error">("idle");
   const [transcript, setTranscript] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
   const [copySuccess, setCopySuccess] = useState(false);
 
+  // monetization + history state
+  const [mounted, setMounted] = useState(false);
+  const [pro, setPro] = useState(false);
+  const [remaining, setRemaining] = useState(FREE_DAILY_LIMIT);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [paywallReason, setPaywallReason] = useState<string | undefined>();
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
   const [recordTime, setRecordTime] = useState(0);
 
+  // Load persisted state on mount (client-only to avoid hydration mismatch).
+  // localStorage isn't available during SSR, so this must run in an effect.
   useEffect(() => {
-    if (status === "recording") {
-      timerRef.current = setInterval(() => {
-        setRecordTime((prev) => prev + 1);
-      }, 1000);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (status !== "success") setRecordTime(0);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setMounted(true);
+    setPro(checkIsPro());
+    setRemaining(getRemaining());
+    setHistory(getHistory());
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, []);
+
+  const refreshEntitlement = useCallback(() => {
+    setPro(checkIsPro());
+    setRemaining(getRemaining());
+  }, []);
+
+  useEffect(() => {
+    if (status !== "recording") return;
+    const id = setInterval(() => setRecordTime((p) => p + 1), 1000);
+    return () => clearInterval(id);
   }, [status]);
 
   const formatTime = (seconds: number) => {
@@ -72,10 +90,39 @@ export default function Home() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const openPaywall = (reason?: string) => {
+    setPaywallReason(reason);
+    setShowPaywall(true);
+  };
+
   const startRecording = async () => {
+    // Gate: free users get a limited number of messages per day
+    if (!canGenerate()) {
+      openPaywall(`You've used all ${FREE_DAILY_LIMIT} free messages today. Upgrade for unlimited.`);
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      // ── Noise suppression: clean the audio before it ever reaches Whisper ──
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      });
+
+      // Prefer Opus in webm — best quality/size for speech recognition
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "";
+
+      const mediaRecorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType, audioBitsPerSecond: 128000 } : undefined
+      );
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -84,7 +131,9 @@ export default function Home() {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mimeType || "audio/webm",
+        });
         await processAudio(audioBlob);
       };
 
@@ -92,7 +141,8 @@ export default function Home() {
       setStatus("recording");
       setError("");
       setResult(null);
-    } catch (err) {
+      setRecordTime(0);
+    } catch {
       setError("Microphone access denied. Please check your browser settings.");
       setStatus("error");
     }
@@ -108,7 +158,7 @@ export default function Home() {
 
   const processAudio = async (audioBlob: Blob) => {
     try {
-      // Step 1 — Transcribe with language hint
+      // Step 1 — Transcribe with language hint (auto = Whisper detects)
       const formData = new FormData();
       formData.append("file", audioBlob, "recording.webm");
       formData.append("language", language);
@@ -126,11 +176,15 @@ export default function Home() {
       const { text } = await transcribeRes.json();
       setTranscript(text);
 
-      // Step 2 — Format with language-specific AI prompt
+      if (!text || !text.trim()) {
+        throw new Error("Couldn't catch any speech. Please try again in a quieter spot.");
+      }
+
+      // Step 2 — Format with language + tone aware AI prompt
       const generateRes = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text, language }),
+        body: JSON.stringify({ transcript: text, language, tone }),
       });
 
       if (!generateRes.ok) {
@@ -138,14 +192,30 @@ export default function Home() {
         throw new Error(errData.error || "Formatting failed");
       }
 
-      const resultData = await generateRes.json();
+      const resultData: Result = await generateRes.json();
       setResult(resultData);
       setStatus("success");
-    } catch (err: any) {
+
+      // Count usage (free tier only) + persist to history
+      if (!checkIsPro()) {
+        incrementUsage();
+        setRemaining(getRemaining());
+      }
+      setHistory(
+        addHistory({
+          formattedMessage: resultData.formattedMessage,
+          poll: resultData.poll ?? null,
+          transcript: text,
+          language,
+          tone,
+        })
+      );
+    } catch (err: unknown) {
+      const message = errorMessage(err);
       setError(
-        err.message.includes("quota")
+        message.includes("quota")
           ? "API Limit Reached: Please check your API billing/credits."
-          : err.message || "An unexpected error occurred."
+          : message
       );
       setStatus("error");
     }
@@ -157,11 +227,6 @@ export default function Home() {
     setTimeout(() => setCopySuccess(false), 2000);
   };
 
-  const handleShare = (text: string) => {
-    const url = `https://wa.me/?text=${encodeURIComponent(text)}`;
-    window.open(url, "_blank");
-  };
-
   const handleReset = () => {
     setStatus("idle");
     setResult(null);
@@ -170,6 +235,7 @@ export default function Home() {
   };
 
   const activeConfig = LANGUAGE_CONFIG[language];
+  const showCounter = mounted && !pro;
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] dark:bg-[#0F1115] text-zinc-900 dark:text-zinc-100 font-sans selection:bg-green-500/30">
@@ -181,31 +247,69 @@ export default function Home() {
               <MessageSquare className="w-5 h-5 text-white" />
             </div>
             <span className="font-bold text-lg tracking-tight">Voice2WA</span>
+            {mounted && pro && (
+              <span className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider bg-gradient-to-r from-amber-400 to-amber-500 text-white px-2 py-0.5 rounded-full">
+                <Crown className="w-3 h-3" /> Pro
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
-            <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-xs font-medium text-zinc-500 uppercase tracking-widest">AI Professional</span>
+            <button
+              onClick={() => setShowHistory(true)}
+              className="relative p-2 rounded-xl hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              title="History"
+            >
+              <Clock className="w-5 h-5 text-zinc-500" />
+              {mounted && history.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-green-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                  {history.length}
+                </span>
+              )}
+            </button>
+            {mounted && !pro && (
+              <button
+                onClick={() => openPaywall()}
+                className="flex items-center gap-1.5 text-xs font-bold bg-gradient-to-r from-green-500 to-emerald-600 text-white px-3 py-2 rounded-xl shadow-md shadow-green-500/20 hover:opacity-90 transition-opacity"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Upgrade
+              </button>
+            )}
           </div>
         </div>
       </nav>
 
       <main className="max-w-3xl mx-auto px-6 py-12">
-        {/* Hero Section */}
+        {/* Hero */}
         <section className="text-center mb-10">
           <h2 className="text-4xl font-extrabold tracking-tight mb-4 sm:text-5xl">
-            Speech to <span className="text-green-500">Structured</span>
+            Speak your mind. <span className="text-green-500">Send like a pro.</span>
           </h2>
           <p className="text-zinc-500 dark:text-zinc-400 text-lg max-w-lg mx-auto">
-            Convert your voice notes into polished WhatsApp messages — in Hindi, Hinglish, or English.
+            Turn rough voice notes into clean, professional messages — in Hindi, Hinglish, or English. Just tap and talk.
           </p>
         </section>
 
-        {/* ── Language Switcher ── */}
+        {/* Free usage counter */}
+        {showCounter && (
+          <div className="mb-6 flex items-center justify-center">
+            <button
+              onClick={() => openPaywall()}
+              className="text-xs font-medium text-zinc-500 dark:text-zinc-400 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-full px-4 py-2 hover:border-green-400 transition-colors"
+            >
+              <span className={cn(remaining === 0 && "text-red-500 font-bold")}>
+                {remaining}/{FREE_DAILY_LIMIT}
+              </span>{" "}
+              free messages left today · <span className="text-green-600 font-semibold">Go unlimited →</span>
+            </button>
+          </div>
+        )}
+
+        {/* Language Switcher */}
         <div className="mb-8">
           <p className="text-center text-xs font-bold uppercase tracking-widest text-zinc-400 mb-3">
             Output Language
           </p>
-          <div className="flex items-center justify-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
             {(Object.keys(LANGUAGE_CONFIG) as Language[]).map((lang) => {
               const cfg = LANGUAGE_CONFIG[lang];
               const isActive = language === lang;
@@ -214,12 +318,11 @@ export default function Home() {
                   key={lang}
                   onClick={() => {
                     setLanguage(lang);
-                    // reset result when language changes so user re-records
                     if (status === "success") handleReset();
                   }}
                   whileTap={{ scale: 0.95 }}
                   className={cn(
-                    "flex flex-col items-center gap-1 px-5 py-3 rounded-2xl border-2 font-semibold text-sm transition-all duration-200 min-w-[90px]",
+                    "flex flex-col items-center gap-1 px-5 py-3 rounded-2xl border-2 font-semibold text-sm transition-all duration-200 min-w-[88px]",
                     isActive
                       ? `bg-gradient-to-br ${cfg.color} text-white border-transparent shadow-lg`
                       : "bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700 hover:border-zinc-400"
@@ -234,7 +337,6 @@ export default function Home() {
             })}
           </div>
 
-          {/* Active language description */}
           <AnimatePresence mode="wait">
             <motion.p
               key={language}
@@ -243,15 +345,21 @@ export default function Home() {
               exit={{ opacity: 0, y: -4 }}
               className="text-center text-xs text-zinc-400 mt-3"
             >
-              {language === "hindi" && "🎙 Speak in Hindi → message in हिंदी (Devanagari)"}
-              {language === "hinglish" && "🎙 Speak in Hinglish → message in Hinglish (Roman Hindi + English)"}
-              {language === "english" && "🎙 Speak in English → professionally formatted English message"}
+              {activeConfig.hint}
             </motion.p>
           </AnimatePresence>
         </div>
 
-        {/* Ad — Below Language Switcher */}
-        <AdBanner slot="1234567890" format="horizontal" className="mb-8 rounded-2xl overflow-hidden" />
+        {/* Tone presets */}
+        <TonePicker
+          value={tone}
+          onChange={setTone}
+          isPro={pro}
+          onLockedTap={() => openPaywall("Unlock all 8 professional tones — including Property Dealer, Society Admin & Sales.")}
+        />
+
+        {/* Ad — Below controls (hidden for Pro) */}
+        <AdBanner slot="1234567890" format="horizontal" className="mb-8 rounded-2xl overflow-hidden" disabled={pro} />
 
         {/* Recording Interface */}
         <div className="relative group">
@@ -263,15 +371,14 @@ export default function Home() {
           />
           <div className="relative bg-white dark:bg-zinc-900 rounded-[2rem] border border-zinc-200 dark:border-zinc-800 p-8 shadow-xl">
             <div className="flex flex-col items-center gap-8 py-6">
-
-              {/* Audio Visualizer */}
+              {/* Visualizer */}
               <div className="flex items-end gap-1 h-12">
                 {[...Array(14)].map((_, i) => (
                   <motion.div
                     key={i}
                     animate={
                       status === "recording"
-                        ? { height: [8, 36 + Math.random() * 10, 12, 32, 8] }
+                        ? { height: [8, BAR_PEAKS[i], 12, 32, 8] }
                         : { height: 8 }
                     }
                     transition={{ repeat: Infinity, duration: 0.7 + i * 0.03, delay: i * 0.04 }}
@@ -326,7 +433,7 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Status Text */}
+              {/* Status */}
               <div className="text-center space-y-2">
                 <p
                   className={cn(
@@ -346,7 +453,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Error Message */}
+            {/* Error */}
             <AnimatePresence>
               {error && (
                 <motion.div
@@ -366,16 +473,11 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Results Area */}
+        {/* Results */}
         <div className="mt-12 space-y-8">
           <AnimatePresence>
             {result && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-6"
-              >
-                {/* Raw Transcript (collapsible) */}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 {transcript && (
                   <details className="group bg-zinc-50 dark:bg-zinc-800/50 rounded-2xl border border-zinc-200 dark:border-zinc-700 px-5 py-3 cursor-pointer">
                     <summary className="text-xs font-bold uppercase tracking-widest text-zinc-400 list-none flex items-center justify-between">
@@ -388,7 +490,6 @@ export default function Home() {
                   </details>
                 )}
 
-                {/* Formatted Message */}
                 <div className="bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-lg">
                   <div className="px-6 py-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/50 dark:bg-zinc-800/50">
                     <div className="flex items-center gap-2">
@@ -401,36 +502,25 @@ export default function Home() {
                       onClick={() => handleCopy(result.formattedMessage)}
                       className="p-2 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-lg transition-colors"
                     >
-                      {copySuccess ? (
-                        <Check className="w-4 h-4 text-green-500" />
-                      ) : (
-                        <Copy className="w-4 h-4 text-zinc-500" />
-                      )}
+                      {copySuccess ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4 text-zinc-500" />}
                     </button>
                   </div>
                   <div className="p-8">
                     <p
                       className={cn(
-                        "whitespace-pre-wrap leading-relaxed text-lg",
-                        "text-zinc-800 dark:text-zinc-200",
-                        language === "hindi" ? "font-normal" : "italic"
+                        "whitespace-pre-wrap leading-relaxed text-lg text-zinc-800 dark:text-zinc-200",
+                        language === "hindi" ? "font-normal" : ""
                       )}
                     >
                       {result.formattedMessage}
                     </p>
                     <div className="mt-8 pt-8 border-t border-zinc-100 dark:border-zinc-800">
-                      <button
-                        onClick={() => handleShare(result.formattedMessage)}
-                        className="w-full h-14 bg-[#25D366] hover:bg-[#22c35e] text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-3 transition-all active:scale-[0.98] shadow-lg shadow-green-500/20"
-                      >
-                        <Share2 className="w-5 h-5" />
-                        Send to WhatsApp
-                      </button>
+                      <ShareMenu text={result.formattedMessage} />
                     </div>
                   </div>
                 </div>
 
-                {/* Poll Section */}
+                {/* Poll */}
                 {result.poll && (
                   <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
@@ -440,13 +530,9 @@ export default function Home() {
                     <div className="p-8">
                       <div className="flex items-center gap-2 text-blue-500 mb-4">
                         <span className="text-lg">📊</span>
-                        <span className="text-xs font-bold uppercase tracking-widest">
-                          Suggested WhatsApp Poll
-                        </span>
+                        <span className="text-xs font-bold uppercase tracking-widest">Suggested WhatsApp Poll</span>
                       </div>
-                      <h3 className="text-xl font-bold text-blue-900 dark:text-blue-200 mb-5">
-                        {result.poll.question}
-                      </h3>
+                      <h3 className="text-xl font-bold text-blue-900 dark:text-blue-200 mb-5">{result.poll.question}</h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {result.poll.options.map((opt, i) => (
                           <div
@@ -457,17 +543,13 @@ export default function Home() {
                           </div>
                         ))}
                       </div>
-                      <p className="text-xs text-blue-400 mt-5 italic">
-                        * Open WhatsApp → Attach → Poll to create this.
-                      </p>
+                      <p className="text-xs text-blue-400 mt-5 italic">* Open WhatsApp → Attach → Poll to create this.</p>
                     </div>
                   </motion.div>
                 )}
 
-                {/* Ad — Below Results */}
-                <AdBanner slot="0987654321" format="rectangle" className="rounded-2xl overflow-hidden" />
+                <AdBanner slot="0987654321" format="rectangle" className="rounded-2xl overflow-hidden" disabled={pro} />
 
-                {/* Record Again */}
                 <div className="text-center pt-4">
                   <button
                     onClick={handleReset}
@@ -486,6 +568,20 @@ export default function Home() {
       <footer className="max-w-4xl mx-auto px-6 py-12 border-t border-zinc-200 dark:border-zinc-800 text-center">
         <p className="text-zinc-400 text-sm font-medium">Built for the Modern Professional.</p>
       </footer>
+
+      {/* Overlays */}
+      <PaywallModal
+        open={showPaywall}
+        reason={paywallReason}
+        onClose={() => setShowPaywall(false)}
+        onUpgraded={refreshEntitlement}
+      />
+      <HistoryPanel
+        open={showHistory}
+        items={history}
+        onClose={() => setShowHistory(false)}
+        onChange={setHistory}
+      />
     </div>
   );
 }
