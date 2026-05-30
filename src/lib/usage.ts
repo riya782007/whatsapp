@@ -1,37 +1,129 @@
-function getTodayKey(): string {
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, "0");
-  const dd = String(today.getDate()).padStart(2, "0");
-  return `voicepro_usage_${yyyy}-${mm}-${dd}`;
+// ─────────────────────────────────────────────────────────────
+// Client-side usage + plan tracking (localStorage based).
+// Used to enforce the free daily limit and unlock Pro features.
+// Note: this is a client-side gate for UX/funnel purposes. Real
+// entitlement is confirmed server-side at payment verification.
+// ─────────────────────────────────────────────────────────────
+
+import { FREE_DAILY_LIMIT, PlanTier } from "./config";
+
+const USAGE_KEY = "v2wa_usage";
+const PLAN_KEY = "v2wa_plan";
+const UID_KEY = "v2wa_uid";
+
+interface UsageRecord {
+  date: string; // YYYY-MM-DD
+  count: number;
 }
 
-export function getUsageToday(): number {
-  if (typeof window === "undefined") return 0;
-  const val = localStorage.getItem(getTodayKey());
-  return val ? parseInt(val, 10) : 0;
+interface PlanRecord {
+  tier: PlanTier;
+  /** epoch ms; undefined for lifetime */
+  expiresAt?: number;
+  paymentId?: string;
 }
 
-export function incrementUsage(): void {
-  if (typeof window === "undefined") return;
-  const current = getUsageToday();
-  localStorage.setItem(getTodayKey(), String(current + 1));
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
-export function canUseForFree(): boolean {
-  return getUsageToday() < 5;
+function isBrowser(): boolean {
+  return typeof window !== "undefined";
 }
 
-export function isPremium(): boolean {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem("voicepro_premium") === "true";
-}
-
-export function setPremium(val: boolean): void {
-  if (typeof window === "undefined") return;
-  if (val) {
-    localStorage.setItem("voicepro_premium", "true");
-  } else {
-    localStorage.removeItem("voicepro_premium");
+// ── Stable anonymous user id ────────────────────────────────
+// Used to attribute payments (passed to Razorpay) and to look up the
+// server-side entitlement. Persisted in localStorage.
+export function getUserId(): string {
+  if (!isBrowser()) return "";
+  let id = localStorage.getItem(UID_KEY);
+  if (!id) {
+    id =
+      (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) ||
+      `u_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(UID_KEY, id);
   }
+  return id;
+}
+
+// ── Usage ───────────────────────────────────────────────────
+
+export function getUsage(): UsageRecord {
+  if (!isBrowser()) return { date: todayStr(), count: 0 };
+  try {
+    const raw = localStorage.getItem(USAGE_KEY);
+    if (!raw) return { date: todayStr(), count: 0 };
+    const parsed = JSON.parse(raw) as UsageRecord;
+    // reset on a new day
+    if (parsed.date !== todayStr()) return { date: todayStr(), count: 0 };
+    return parsed;
+  } catch {
+    return { date: todayStr(), count: 0 };
+  }
+}
+
+export function incrementUsage(): number {
+  if (!isBrowser()) return 0;
+  const current = getUsage();
+  const next: UsageRecord = { date: todayStr(), count: current.count + 1 };
+  localStorage.setItem(USAGE_KEY, JSON.stringify(next));
+  return next.count;
+}
+
+export function getRemaining(): number {
+  return Math.max(0, FREE_DAILY_LIMIT - getUsage().count);
+}
+
+// ── Plan ────────────────────────────────────────────────────
+
+export function getPlan(): PlanRecord {
+  if (!isBrowser()) return { tier: "free" };
+  try {
+    const raw = localStorage.getItem(PLAN_KEY);
+    if (!raw) return { tier: "free" };
+    const parsed = JSON.parse(raw) as PlanRecord;
+    // expire monthly subscriptions
+    if (parsed.tier === "pro" && parsed.expiresAt && Date.now() > parsed.expiresAt) {
+      return { tier: "free" };
+    }
+    return parsed;
+  } catch {
+    return { tier: "free" };
+  }
+}
+
+export function setPlan(tier: PlanTier, paymentId?: string): void {
+  if (!isBrowser()) return;
+  const record: PlanRecord = { tier, paymentId };
+  if (tier === "pro") {
+    // 30 days from now
+    record.expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+  }
+  localStorage.setItem(PLAN_KEY, JSON.stringify(record));
+}
+
+/** Apply an entitlement coming from the server (DB), with an exact expiry. */
+export function setPlanRecord(
+  tier: PlanTier,
+  expiresAt?: number,
+  paymentId?: string
+): void {
+  if (!isBrowser()) return;
+  if (tier === "free") {
+    localStorage.removeItem(PLAN_KEY);
+    return;
+  }
+  const record: PlanRecord = { tier, expiresAt, paymentId };
+  localStorage.setItem(PLAN_KEY, JSON.stringify(record));
+}
+
+export function isPro(): boolean {
+  const plan = getPlan();
+  return plan.tier === "pro" || plan.tier === "lifetime";
+}
+
+/** Whether a free user still has messages left today. Pro users always true. */
+export function canGenerate(): boolean {
+  if (isPro()) return true;
+  return getRemaining() > 0;
 }
