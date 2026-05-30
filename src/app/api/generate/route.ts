@@ -7,6 +7,8 @@ import OpenAI from "openai";
 const SYSTEM_PROMPTS: Record<string, string> = {
   hindi: `You are an expert at converting raw Hindi voice notes into professional, well-formatted WhatsApp messages written entirely in Hindi (Devanagari script).
 
+CRITICAL: The transcript may contain misheard words due to background noise, accent variations, or audio compression. Use contextual clues and common sense to infer the correct intended meaning. Fix ALL spelling errors aggressively, especially proper nouns, technical terms, and common Hindi/English words. If a word does not make contextual sense, replace it with the most likely intended word based on phonetic similarity and context.
+
 Rules:
 1. Output ONLY in Hindi using Devanagari script (हिंदी). Do NOT use Roman/English characters anywhere in the message body.
 2. Fix ALL spelling mistakes, grammar errors, and incomplete words from the transcript. The output must be polished and correct.
@@ -19,6 +21,8 @@ Rules:
 
   hinglish: `You are an expert at converting raw, casual Hinglish (Hindi-English mix) voice notes into professional, well-formatted WhatsApp messages in Hinglish.
 
+CRITICAL: The transcript may contain misheard words due to background noise, accent variations, or audio compression. Use contextual clues and common sense to infer the correct intended meaning. Fix ALL spelling errors aggressively, especially proper nouns, technical terms, and common Hindi/English words. If a word does not make contextual sense, replace it with the most likely intended word based on phonetic similarity and context.
+
 Rules:
 1. Output in natural Hinglish — a clean mix of Hindi words (Roman script, NOT Devanagari) and English. Example: "Kal meeting hai, please time pe aana."
 2. Fix ALL spelling mistakes, unclear words, and transcription errors. If a word sounds like a common word, correct it. Example: "kl" → "kal", "tmrw" → "tomorrow", "mtng" → "meeting".
@@ -30,6 +34,8 @@ Rules:
    { "formattedMessage": "<hinglish message>", "poll": { "question": "<question>", "options": ["<opt1>", "<opt2>"] } | null }`,
 
   english: `You are an expert at converting raw voice notes into professional, well-formatted WhatsApp messages in clear, correct English.
+
+CRITICAL: The transcript may contain misheard words due to background noise, accent variations, or audio compression. Use contextual clues and common sense to infer the correct intended meaning. Fix ALL spelling errors aggressively, especially proper nouns, technical terms, and common Hindi/English words. If a word does not make contextual sense, replace it with the most likely intended word based on phonetic similarity and context.
 
 Rules:
 1. Output ONLY in English. No Hindi or Hinglish words.
@@ -44,7 +50,7 @@ Rules:
 
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, language } = await req.json();
+    const { transcript, language, noiseMode } = await req.json();
 
     if (!transcript) {
       return NextResponse.json({ error: "No transcript provided" }, { status: 400 });
@@ -53,9 +59,14 @@ export async function POST(req: NextRequest) {
     const lang = (language as string) || "hinglish";
     const systemPrompt = SYSTEM_PROMPTS[lang] ?? SYSTEM_PROMPTS.hinglish;
 
-    const userMessage = `Transcript: "${transcript}"
+    let userMessage = `Transcript: "${transcript}"
 
 Please convert this into a professional WhatsApp message following the rules above. Fix all spelling and grammar errors.`;
+
+    // When noise mode is active, add extra instruction for unclear words
+    if (noiseMode) {
+      userMessage += "\n\nIMPORTANT: This was recorded in a very noisy environment. Pay extra attention to unclear or garbled words and use surrounding context to determine correct spellings and intended meaning.";
+    }
 
     // 1. Try Groq (Llama-3.3-70b — best quality + fast)
     if (process.env.GROQ_API_KEY) {

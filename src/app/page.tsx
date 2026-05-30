@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Mic, Square, Copy, Share2, MessageSquare, AlertCircle, Check, Loader2, RefreshCw } from "lucide-react";
+import { Mic, Square, Copy, Share2, MessageSquare, AlertCircle, Check, Loader2, RefreshCw, Volume2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import AdBanner from "@/components/AdBanner";
@@ -46,6 +46,8 @@ export default function Home() {
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
   const [copySuccess, setCopySuccess] = useState(false);
+  const [noiseMode, setNoiseMode] = useState(false);
+  const [confidence, setConfidence] = useState<number | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -112,6 +114,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("file", audioBlob, "recording.webm");
       formData.append("language", language);
+      formData.append("noiseMode", noiseMode ? "true" : "false");
 
       const transcribeRes = await fetch("/api/transcribe", {
         method: "POST",
@@ -123,14 +126,15 @@ export default function Home() {
         throw new Error(errData.error || "Transcription failed");
       }
 
-      const { text } = await transcribeRes.json();
+      const { text, confidence: conf } = await transcribeRes.json();
       setTranscript(text);
+      setConfidence(typeof conf === "number" ? conf : null);
 
       // Step 2 — Format with language-specific AI prompt
       const generateRes = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text, language }),
+        body: JSON.stringify({ transcript: text, language, noiseMode }),
       });
 
       if (!generateRes.ok) {
@@ -167,6 +171,7 @@ export default function Home() {
     setResult(null);
     setTranscript("");
     setError("");
+    setConfidence(null);
   };
 
   const activeConfig = LANGUAGE_CONFIG[language];
@@ -248,6 +253,29 @@ export default function Home() {
               {language === "english" && "🎙 Speak in English → professionally formatted English message"}
             </motion.p>
           </AnimatePresence>
+        </div>
+
+        {/* ── Noise Mode Toggle ── */}
+        <div className="mb-8 flex justify-center">
+          <motion.button
+            onClick={() => setNoiseMode((prev) => !prev)}
+            whileTap={{ scale: 0.95 }}
+            className={cn(
+              "flex items-center gap-2.5 px-5 py-2.5 rounded-2xl border-2 font-semibold text-sm transition-all duration-200",
+              noiseMode
+                ? "bg-gradient-to-br from-amber-500 to-orange-500 text-white border-transparent shadow-lg shadow-amber-500/20"
+                : "bg-white dark:bg-zinc-900 text-zinc-500 dark:text-zinc-400 border-zinc-200 dark:border-zinc-700 hover:border-zinc-400"
+            )}
+          >
+            <Volume2 className="w-4 h-4" />
+            <span>Noise Mode</span>
+            <span
+              className={cn(
+                "w-2 h-2 rounded-full",
+                noiseMode ? "bg-white animate-pulse" : "bg-zinc-300 dark:bg-zinc-600"
+              )}
+            />
+          </motion.button>
         </div>
 
         {/* Ad — Below Language Switcher */}
@@ -379,7 +407,23 @@ export default function Home() {
                 {transcript && (
                   <details className="group bg-zinc-50 dark:bg-zinc-800/50 rounded-2xl border border-zinc-200 dark:border-zinc-700 px-5 py-3 cursor-pointer">
                     <summary className="text-xs font-bold uppercase tracking-widest text-zinc-400 list-none flex items-center justify-between">
-                      <span>Raw Transcript</span>
+                      <div className="flex items-center gap-2">
+                        <span>Raw Transcript</span>
+                        {confidence !== null && (
+                          <span
+                            className={cn(
+                              "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide",
+                              confidence > 80
+                                ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+                                : confidence >= 60
+                                  ? "bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400"
+                                  : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                            )}
+                          >
+                            Confidence: {confidence}%
+                          </span>
+                        )}
+                      </div>
                       <span className="group-open:rotate-180 transition-transform">▾</span>
                     </summary>
                     <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed italic">
