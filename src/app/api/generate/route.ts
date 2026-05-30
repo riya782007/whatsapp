@@ -50,7 +50,7 @@ Rules:
 
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, language, noiseMode } = await req.json();
+    const { transcript, language, noiseMode, tone, customInstructions } = await req.json();
 
     if (!transcript) {
       return NextResponse.json({ error: "No transcript provided" }, { status: 400 });
@@ -66,6 +66,21 @@ Please convert this into a professional WhatsApp message following the rules abo
     // When noise mode is active, add extra instruction for unclear words
     if (noiseMode) {
       userMessage += "\n\nIMPORTANT: This was recorded in a very noisy environment. Pay extra attention to unclear or garbled words and use surrounding context to determine correct spellings and intended meaning.";
+    }
+
+    // Tone-specific instructions
+    if (tone && tone !== "professional") {
+      const toneInstructions: Record<string, string> = {
+        sales: "Additionally, format this as a persuasive sales pitch. Include a clear call-to-action. Make it compelling and highlight key benefits.",
+        notice: "Additionally, format this as a formal notice or official announcement. Use authoritative language suitable for a community group or official communication.",
+        casual: "Additionally, format this in a warm, friendly, casual tone. Use emoji generously. Make it sound like a message from a helpful friend.",
+      };
+
+      if (tone === "custom" && customInstructions) {
+        userMessage += `\n\nAdditional style instructions: ${customInstructions}`;
+      } else if (toneInstructions[tone]) {
+        userMessage += `\n\n${toneInstructions[tone]}`;
+      }
     }
 
     // 1. Try Groq (Llama-3.3-70b — best quality + fast)

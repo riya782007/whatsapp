@@ -1,9 +1,7 @@
 import axios from 'axios';
 
 // Production: points to your deployed Vercel web app
-// Replace this with your actual Vercel URL after deploying the web app
-// e.g. https://voice2wa.vercel.app/api
-const API_BASE_URL = 'https://voice2wa.vercel.app/api';
+const API_BASE_URL = 'https://whatsapp-theta-nine.vercel.app/api';
 
 export interface AIResult {
   formattedMessage: string;
@@ -14,7 +12,7 @@ export interface AIResult {
 }
 
 export class AIService {
-  static async transcribeAndFormat(audioUri: string): Promise<AIResult> {
+  static async transcribeAndFormat(audioUri: string, language: string = 'hinglish'): Promise<AIResult> {
     try {
       // 1. Prepare Audio for Upload
       const formData = new FormData();
@@ -24,6 +22,7 @@ export class AIService {
         type: 'audio/m4a',
         name: 'recording.m4a',
       });
+      formData.append('language', language);
 
       // 2. Transcribe
       const transcribeRes = await axios.post(`${API_BASE_URL}/transcribe`, formData, {
@@ -36,6 +35,7 @@ export class AIService {
       // 3. Generate Professional Message
       const generateRes = await axios.post(`${API_BASE_URL}/generate`, {
         transcript,
+        language,
       }, {
         timeout: 30000,
       });

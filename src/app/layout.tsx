@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Voice2WA – Speak. Format. Send.",
+  title: "VoicePro - Speak. Format. Share Anywhere.",
   description:
-    "Convert your casual Hinglish voice notes into professional, beautifully formatted WhatsApp messages in seconds. Powered by AI.",
+    "Convert your casual voice notes into professional, structured messages for WhatsApp, Telegram & more. Powered by AI. Works in Hindi, Hinglish, and English.",
   keywords: [
     "WhatsApp message formatter",
     "Hinglish voice to text",
@@ -24,20 +24,22 @@ export const metadata: Metadata = {
     "voice to WhatsApp",
     "professional WhatsApp message",
     "India AI messaging",
+    "Telegram message formatter",
+    "voice note to text",
   ],
   openGraph: {
-    title: "Voice2WA – Speak. Format. Send.",
+    title: "VoicePro - Speak. Format. Share Anywhere.",
     description:
-      "Record a casual voice note, get a perfectly formatted WhatsApp message. Powered by Whisper + Llama AI.",
+      "Record a casual voice note, get a perfectly formatted message for WhatsApp, Telegram & more. Powered by Whisper + Llama AI.",
     type: "website",
     locale: "en_IN",
-    siteName: "Voice2WA",
+    siteName: "VoicePro",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Voice2WA – AI WhatsApp Formatter",
+    title: "VoicePro - AI Message Formatter",
     description:
-      "Speak for 10 seconds. Send in 3. Look like a pro every time.",
+      "Convert voice notes into polished messages for WhatsApp, Telegram & more. Hindi, Hinglish, English supported.",
   },
   robots: { index: true, follow: true },
 };
