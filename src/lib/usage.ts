@@ -9,6 +9,7 @@ import { FREE_DAILY_LIMIT, PlanTier } from "./config";
 
 const USAGE_KEY = "v2wa_usage";
 const PLAN_KEY = "v2wa_plan";
+const UID_KEY = "v2wa_uid";
 
 interface UsageRecord {
   date: string; // YYYY-MM-DD
@@ -28,6 +29,21 @@ function todayStr(): string {
 
 function isBrowser(): boolean {
   return typeof window !== "undefined";
+}
+
+// ── Stable anonymous user id ────────────────────────────────
+// Used to attribute payments (passed to Razorpay) and to look up the
+// server-side entitlement. Persisted in localStorage.
+export function getUserId(): string {
+  if (!isBrowser()) return "";
+  let id = localStorage.getItem(UID_KEY);
+  if (!id) {
+    id =
+      (typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID()) ||
+      `u_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(UID_KEY, id);
+  }
+  return id;
 }
 
 // ── Usage ───────────────────────────────────────────────────
@@ -83,6 +99,21 @@ export function setPlan(tier: PlanTier, paymentId?: string): void {
     // 30 days from now
     record.expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
   }
+  localStorage.setItem(PLAN_KEY, JSON.stringify(record));
+}
+
+/** Apply an entitlement coming from the server (DB), with an exact expiry. */
+export function setPlanRecord(
+  tier: PlanTier,
+  expiresAt?: number,
+  paymentId?: string
+): void {
+  if (!isBrowser()) return;
+  if (tier === "free") {
+    localStorage.removeItem(PLAN_KEY);
+    return;
+  }
+  const record: PlanRecord = { tier, expiresAt, paymentId };
   localStorage.setItem(PLAN_KEY, JSON.stringify(record));
 }
 

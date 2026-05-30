@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PLANS } from "@/lib/config";
+import { PLANS, PlanTier } from "@/lib/config";
 import { errorMessage } from "@/lib/utils";
+import { upsertEntitlement, expiryForTier, supabaseConfigured } from "@/lib/supabase";
 
 // Final source of truth before unlocking Pro. Given a payment id + plan,
 // we fetch the payment directly from Razorpay and confirm it is captured
@@ -14,7 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ valid: false, error: "Payments not configured" }, { status: 503 });
     }
 
-    const { paymentId, planId } = await req.json();
+    const { paymentId, planId, userId } = await req.json();
     const plan = PLANS.find((p) => p.id === planId);
     if (!paymentId || !plan) {
       return NextResponse.json({ valid: false, error: "Invalid request" }, { status: 400 });
@@ -41,7 +42,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const tier = plan.id === "lifetime" ? "lifetime" : "pro";
+    const tier: Exclude<PlanTier, "free"> = plan.id === "lifetime" ? "lifetime" : "pro";
+
+    // Persist to Supabase too, so entitlement survives across sessions even
+    // if the webhook isn't configured. (Webhook remains the primary path.)
+    if (supabaseConfigured() && typeof userId === "string" && userId) {
+      await upsertEntitlement({
+        userId,
+        tier,
+        expiresAt: expiryForTier(tier),
+        paymentId,
+      });
+    }
+
     return NextResponse.json({ valid: true, tier, paymentId, method: payment.method });
   } catch (error: unknown) {
     console.error("Payment status error:", error);

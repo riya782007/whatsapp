@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { Plan, PlanTier } from "./config";
-import { setPlan } from "./usage";
+import { getPlan, getUserId, setPlan, setPlanRecord } from "./usage";
 
 export interface CheckoutResult {
   status: "redirecting" | "unconfigured" | "error";
@@ -21,7 +21,7 @@ export async function startCheckout(plan: Plan): Promise<CheckoutResult> {
     const res = await fetch("/api/payment/link", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ planId: plan.id }),
+      body: JSON.stringify({ planId: plan.id, userId: getUserId() }),
     });
 
     if (res.status === 503) return { status: "unconfigured" };
@@ -78,7 +78,7 @@ export async function finalizeFromRedirect(): Promise<FinalizeResult> {
       const res = await fetch("/api/payment/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId: pid, planId }),
+        body: JSON.stringify({ paymentId: pid, planId, userId: getUserId() }),
       });
       const data = await res.json();
       if (data.valid) {
@@ -92,4 +92,31 @@ export async function finalizeFromRedirect(): Promise<FinalizeResult> {
   }
 
   return { state: "none" };
+}
+
+/**
+ * On app load, ask the server (Supabase) for the real entitlement and
+ * mirror it locally. Returns the tier we ended up with. Falls back to the
+ * locally stored plan if the server isn't configured/reachable.
+ */
+export async function syncEntitlementFromServer(): Promise<PlanTier> {
+  if (typeof window === "undefined") return "free";
+  const userId = getUserId();
+  if (!userId) return getPlan().tier;
+  try {
+    const res = await fetch(`/api/entitlement?userId=${encodeURIComponent(userId)}`);
+    if (!res.ok) return getPlan().tier;
+    const data = await res.json();
+    if (data.active && (data.tier === "pro" || data.tier === "lifetime")) {
+      setPlanRecord(
+        data.tier,
+        data.expiresAt ? Date.parse(data.expiresAt) : undefined,
+        data.paymentId
+      );
+      return data.tier;
+    }
+    return getPlan().tier;
+  } catch {
+    return getPlan().tier;
+  }
 }

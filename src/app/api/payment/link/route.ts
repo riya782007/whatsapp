@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { planId } = await req.json();
+    const { planId, userId } = await req.json();
     const plan = PLANS.find((p) => p.id === planId);
     if (!plan) {
       return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
@@ -30,6 +30,11 @@ export async function POST(req: NextRequest) {
 
     // reference_id encodes the plan so the callback knows what was bought.
     const referenceId = `v2wa_${plan.id}_${Date.now()}`;
+
+    // notes carry the plan + the user id so the webhook can attribute the
+    // payment to the right user and persist their entitlement.
+    const notes: Record<string, string> = { plan: plan.id };
+    if (typeof userId === "string" && userId) notes.userId = userId;
 
     const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
     const res = await fetch("https://api.razorpay.com/v1/payment_links", {
@@ -46,7 +51,7 @@ export async function POST(req: NextRequest) {
         reference_id: referenceId,
         notify: { sms: false, email: false },
         reminder_enable: false,
-        notes: { plan: plan.id },
+        notes,
         callback_url: `${origin}/api/payment/callback`,
         callback_method: "get",
       }),

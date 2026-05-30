@@ -22,7 +22,7 @@ import TonePicker from "@/components/TonePicker";
 import ShareMenu from "@/components/ShareMenu";
 import PaywallModal from "@/components/PaywallModal";
 import HistoryPanel from "@/components/HistoryPanel";
-import { finalizeFromRedirect } from "@/lib/checkout";
+import { finalizeFromRedirect, syncEntitlementFromServer } from "@/lib/checkout";
 import {
   Language,
   Tone,
@@ -81,6 +81,11 @@ export default function Home() {
     setRemaining(getRemaining());
     setHistory(getHistory());
     /* eslint-enable react-hooks/set-state-in-effect */
+    // Confirm real entitlement from the server (Supabase) and mirror locally.
+    syncEntitlementFromServer().then(() => {
+      setPro(checkIsPro());
+      setRemaining(getRemaining());
+    });
   }, []);
 
   const refreshEntitlement = useCallback(() => {
