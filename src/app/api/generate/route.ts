@@ -77,7 +77,8 @@ Please convert this into a professional WhatsApp message following the rules abo
       };
 
       if (tone === "custom" && customInstructions) {
-        userMessage += `\n\nAdditional style instructions: ${customInstructions}`;
+        const truncatedInstructions = customInstructions.slice(0, 200);
+        userMessage += `\n\nAdditional style instructions: ${truncatedInstructions}`;
       } else if (toneInstructions[tone]) {
         userMessage += `\n\n${toneInstructions[tone]}`;
       }

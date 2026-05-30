@@ -32,8 +32,8 @@ const WHISPER_LANGUAGE_CODES: Record<string, string> = {
 };
 
 // Calculate confidence score from segment avg_logprobs (0-100)
-function calculateConfidence(segments: Array<{ avg_logprob?: number }> | undefined): number {
-  if (!segments || segments.length === 0) return 75; // default when no data
+function calculateConfidence(segments: Array<{ avg_logprob?: number }> | undefined): number | null {
+  if (!segments || segments.length === 0) return null;
   const totalLogProb = segments.reduce((sum, seg) => sum + (seg.avg_logprob ?? -0.5), 0);
   const avgLogProb = totalLogProb / segments.length;
   return Math.round(Math.min(100, Math.max(0, (1 + avgLogProb) * 100)));
@@ -55,9 +55,10 @@ export async function POST(req: NextRequest) {
 
     // When noise mode is active, prepend noise-awareness context to the prompt
     if (noiseMode) {
-      whisperPrompt =
-        "Recording in a noisy environment with background chatter and ambient sounds. Focus on the primary speaker's voice and ignore background noise. " +
-        whisperPrompt;
+      const noisePrefix = language === "hindi"
+        ? "यह रिकॉर्डिंग शोर-शराबे वाले माहौल में की गई है। मुख्य वक्ता की आवाज़ पर ध्यान दें और बैकग्राउंड नॉइज़ को नज़रअंदाज़ करें। "
+        : "Recording in a noisy environment with background chatter and ambient sounds. Focus on the primary speaker's voice and ignore background noise. ";
+      whisperPrompt = noisePrefix + whisperPrompt;
     }
 
     // 1. Try Groq (Ultra Fast — Whisper Large v3)

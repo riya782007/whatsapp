@@ -214,7 +214,7 @@ export default function Home() {
   };
 
   const handleTelegram = (text: string) => {
-    const url = `https://t.me/share/url?text=${encodeURIComponent(text)}`;
+    const url = `https://t.me/share/url?url=&text=${encodeURIComponent(text)}`;
     window.open(url, "_blank");
   };
 
