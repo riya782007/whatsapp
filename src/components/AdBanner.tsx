@@ -31,18 +31,21 @@ export default function AdBanner({
   const adRef = useRef<HTMLModElement>(null);
   const pushed = useRef(false);
 
+  const active = !disabled && !!ADSENSE_CLIENT && !!slot;
+
   useEffect(() => {
-    if (disabled || !ADSENSE_CLIENT || pushed.current) return;
+    if (!active || pushed.current) return;
     try {
       (window.adsbygoogle = window.adsbygoogle || []).push({});
       pushed.current = true;
     } catch (e) {
       console.warn("AdSense push failed:", e);
     }
-  }, [disabled]);
+  }, [active]);
 
-  // No ads for Pro users or when AdSense isn't configured yet.
-  if (disabled || !ADSENSE_CLIENT) return null;
+  // Render nothing for Pro users, when AdSense isn't configured, or when no
+  // ad-unit slot id is provided yet (Auto Ads from the head script still work).
+  if (!active) return null;
 
   return (
     <div className={`overflow-hidden text-center ${className}`}>

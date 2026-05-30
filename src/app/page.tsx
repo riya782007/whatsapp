@@ -42,6 +42,11 @@ import { HistoryItem, getHistory, addHistory } from "@/lib/history";
 // calling Math.random during render, which React flags as impure).
 const BAR_PEAKS = [40, 44, 38, 46, 41, 45, 39, 43, 47, 40, 42, 46, 38, 44];
 
+// Real AdSense ad-unit slot ids (create units in the AdSense dashboard).
+// Leave unset to rely on Auto Ads only. Set in Vercel when ready.
+const AD_SLOT_TOP = process.env.NEXT_PUBLIC_ADSENSE_SLOT_TOP || "";
+const AD_SLOT_RESULT = process.env.NEXT_PUBLIC_ADSENSE_SLOT_RESULT || "";
+
 export default function Home() {
   const [language, setLanguage] = useState<Language>("auto");
   const [tone, setTone] = useState<Tone>("general");
@@ -390,7 +395,7 @@ export default function Home() {
         />
 
         {/* Ad — Below controls (hidden for Pro) */}
-        <AdBanner slot="1234567890" format="horizontal" className="mb-8 rounded-2xl overflow-hidden" disabled={pro} />
+        <AdBanner slot={AD_SLOT_TOP} format="horizontal" className="mb-8 rounded-2xl overflow-hidden" disabled={pro} />
 
         {/* Recording Interface */}
         <div className="relative group">
@@ -579,7 +584,7 @@ export default function Home() {
                   </motion.div>
                 )}
 
-                <AdBanner slot="0987654321" format="rectangle" className="rounded-2xl overflow-hidden" disabled={pro} />
+                <AdBanner slot={AD_SLOT_RESULT} format="rectangle" className="rounded-2xl overflow-hidden" disabled={pro} />
 
                 <div className="text-center pt-4">
                   <button
@@ -596,8 +601,14 @@ export default function Home() {
         </div>
       </main>
 
-      <footer className="max-w-4xl mx-auto px-6 py-12 border-t border-zinc-200 dark:border-zinc-800 text-center">
+      <footer className="max-w-4xl mx-auto px-6 py-12 border-t border-zinc-200 dark:border-zinc-800 text-center space-y-3">
         <p className="text-zinc-400 text-sm font-medium">Built for the Modern Professional.</p>
+        <div className="flex items-center justify-center gap-4 text-xs text-zinc-400">
+          <a href="/privacy" className="hover:text-zinc-600 transition-colors">Privacy Policy</a>
+          <span>·</span>
+          <a href="/terms" className="hover:text-zinc-600 transition-colors">Terms of Service</a>
+        </div>
+        <p className="text-[11px] text-zinc-300 dark:text-zinc-600">© {new Date().getFullYear()} Voice2WA</p>
       </footer>
 
       {/* Overlays */}
