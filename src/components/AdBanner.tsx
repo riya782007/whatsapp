@@ -16,9 +16,11 @@ declare global {
   }
 }
 
-// Real publisher ID comes from env (set in Vercel). When it's missing we
-// render nothing so there are no broken/placeholder ad slots in production.
-const ADSENSE_CLIENT = process.env.NEXT_PUBLIC_ADSENSE_CLIENT;
+// Publisher ID. The default is the live account ID; set
+// NEXT_PUBLIC_ADSENSE_CLIENT in Vercel to override (e.g. per-environment).
+// Note: the publisher ID is public by design (it ships in page HTML).
+const ADSENSE_CLIENT =
+  process.env.NEXT_PUBLIC_ADSENSE_CLIENT || "ca-pub-8484576096599533";
 
 export default function AdBanner({
   slot,

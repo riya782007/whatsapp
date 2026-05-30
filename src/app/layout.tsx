@@ -42,7 +42,10 @@ export const metadata: Metadata = {
   robots: { index: true, follow: true },
 };
 
-const ADSENSE_CLIENT = process.env.NEXT_PUBLIC_ADSENSE_CLIENT;
+// Publisher ID. Defaults to the live account ID; override via
+// NEXT_PUBLIC_ADSENSE_CLIENT in Vercel if needed.
+const ADSENSE_CLIENT =
+  process.env.NEXT_PUBLIC_ADSENSE_CLIENT || "ca-pub-8484576096599533";
 
 export default function RootLayout({
   children,
