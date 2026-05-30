@@ -13,6 +13,7 @@ import {
   Clock,
   Crown,
   Sparkles,
+  X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn, errorMessage } from "@/lib/utils";
@@ -21,6 +22,7 @@ import TonePicker from "@/components/TonePicker";
 import ShareMenu from "@/components/ShareMenu";
 import PaywallModal from "@/components/PaywallModal";
 import HistoryPanel from "@/components/HistoryPanel";
+import { finalizeFromRedirect } from "@/lib/checkout";
 import {
   Language,
   Tone,
@@ -57,6 +59,9 @@ export default function Home() {
   const [paywallReason, setPaywallReason] = useState<string | undefined>();
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [upgradeBanner, setUpgradeBanner] = useState<
+    { type: "success" | "failed"; text: string } | null
+  >(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -77,6 +82,32 @@ export default function Home() {
     setPro(checkIsPro());
     setRemaining(getRemaining());
   }, []);
+
+  // After returning from the Razorpay payment page, confirm + unlock.
+  useEffect(() => {
+    let active = true;
+    finalizeFromRedirect().then((r) => {
+      if (!active) return;
+      if (r.state === "success") {
+        refreshEntitlement();
+        setUpgradeBanner({
+          type: "success",
+          text:
+            r.tier === "lifetime"
+              ? "🎉 Payment successful — Lifetime access unlocked!"
+              : "🎉 Payment successful — Pro is now active!",
+        });
+      } else if (r.state === "failed") {
+        setUpgradeBanner({
+          type: "failed",
+          text: "Payment was not completed. You can try again anytime.",
+        });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [refreshEntitlement]);
 
   useEffect(() => {
     if (status !== "recording") return;
@@ -574,7 +605,6 @@ export default function Home() {
         open={showPaywall}
         reason={paywallReason}
         onClose={() => setShowPaywall(false)}
-        onUpgraded={refreshEntitlement}
       />
       <HistoryPanel
         open={showHistory}
@@ -582,6 +612,30 @@ export default function Home() {
         onClose={() => setShowHistory(false)}
         onChange={setHistory}
       />
+
+      {/* Payment result toast */}
+      <AnimatePresence>
+        {upgradeBanner && (
+          <motion.div
+            initial={{ y: -60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -60, opacity: 0 }}
+            className="fixed top-4 left-1/2 -translate-x-1/2 z-[110] px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 max-w-[92vw]"
+            style={{
+              backgroundColor: upgradeBanner.type === "success" ? "#16a34a" : "#dc2626",
+            }}
+          >
+            <span className="text-sm font-semibold text-white">{upgradeBanner.text}</span>
+            <button
+              onClick={() => setUpgradeBanner(null)}
+              className="text-white/80 hover:text-white"
+              aria-label="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

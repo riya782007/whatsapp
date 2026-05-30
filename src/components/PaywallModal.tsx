@@ -10,12 +10,11 @@ import { cn } from "@/lib/utils";
 interface PaywallModalProps {
   open: boolean;
   onClose: () => void;
-  onUpgraded: () => void;
   /** Optional context line, e.g. "You've used all 5 free messages today". */
   reason?: string;
 }
 
-export default function PaywallModal({ open, onClose, onUpgraded, reason }: PaywallModalProps) {
+export default function PaywallModal({ open, onClose, reason }: PaywallModalProps) {
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -23,19 +22,22 @@ export default function PaywallModal({ open, onClose, onUpgraded, reason }: Payw
     setNotice(null);
     setLoadingPlan(plan.id);
     const result = await startCheckout(plan);
+
+    if (result.status === "redirecting") {
+      // Browser is navigating to Razorpay's hosted payment page.
+      setNotice("Opening secure payment page…");
+      return; // keep the spinner; page will navigate away
+    }
+
     setLoadingPlan(null);
 
-    if (result.status === "success") {
-      onUpgraded();
-      onClose();
-    } else if (result.status === "unconfigured") {
+    if (result.status === "unconfigured") {
       setNotice(
-        "Payments are being set up. Add your Razorpay keys in Vercel to enable instant checkout."
+        "Payments are being set up. Add your Razorpay keys in Vercel to enable live checkout."
       );
     } else if (result.status === "error") {
       setNotice(result.message || "Something went wrong. Please try again.");
     }
-    // "cancelled" => silently do nothing
   };
 
   return (
@@ -145,7 +147,7 @@ export default function PaywallModal({ open, onClose, onUpgraded, reason }: Payw
               )}
 
               <p className="text-[11px] text-center text-zinc-400 pt-1">
-                Secure payment via Razorpay · Cancel anytime · No hidden charges
+                Secure live payment via Razorpay · UPI & Cards accepted · No hidden charges
               </p>
             </div>
           </motion.div>

@@ -1,85 +1,95 @@
 // ─────────────────────────────────────────────────────────────
-// Client-side Razorpay checkout flow.
-// Creates an order on our server, opens Razorpay, then verifies the
-// payment server-side before unlocking Pro locally.
+// Razorpay Payment Link flow (live UPI / card payments).
+//   1. startCheckout(plan) -> server creates a live payment link
+//      -> we redirect the browser to Razorpay's hosted page.
+//   2. After payment, Razorpay redirects back to /api/payment/callback,
+//      which verifies the signature and bounces to /?pay=ok&pid=...&plan=...
+//   3. finalizeFromRedirect() re-confirms the payment server-side and,
+//      only then, unlocks Pro locally.
 // ─────────────────────────────────────────────────────────────
 
-import { Plan } from "./config";
+import { Plan, PlanTier } from "./config";
 import { setPlan } from "./usage";
 
-interface RazorpayResponse {
-  razorpay_order_id: string;
-  razorpay_payment_id: string;
-  razorpay_signature: string;
-}
-
-declare global {
-  interface Window {
-    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
-  }
-}
-
 export interface CheckoutResult {
-  status: "success" | "cancelled" | "unconfigured" | "error";
+  status: "redirecting" | "unconfigured" | "error";
   message?: string;
 }
 
 export async function startCheckout(plan: Plan): Promise<CheckoutResult> {
   try {
-    // 1. Create order on our backend
-    const orderRes = await fetch("/api/payment/order", {
+    const res = await fetch("/api/payment/link", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ planId: plan.id }),
     });
 
-    if (orderRes.status === 503) {
-      return { status: "unconfigured" };
-    }
-    if (!orderRes.ok) {
-      const e = await orderRes.json().catch(() => ({}));
-      return { status: "error", message: e.error || "Could not start checkout" };
+    if (res.status === 503) return { status: "unconfigured" };
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      return { status: "error", message: e.error || "Could not start payment" };
     }
 
-    const order = await orderRes.json();
-
-    if (!window.Razorpay) {
-      return { status: "error", message: "Payment library not loaded. Refresh and try again." };
+    const data = await res.json();
+    if (!data.url) {
+      return { status: "error", message: "No payment link returned. Please try again." };
     }
 
-    // 2. Open Razorpay checkout
-    return await new Promise<CheckoutResult>((resolve) => {
-      const rzp = new window.Razorpay!({
-        key: order.keyId,
-        amount: order.amount,
-        currency: order.currency,
-        name: "Voice2WA",
-        description: `${plan.name} Plan`,
-        order_id: order.orderId,
-        theme: { color: "#22c55e" },
-        handler: async (response: RazorpayResponse) => {
-          // 3. Verify on the server
-          const verifyRes = await fetch("/api/payment/verify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(response),
-          });
-          const verify = await verifyRes.json();
-          if (verify.valid) {
-            const tier = plan.id === "lifetime" ? "lifetime" : "pro";
-            setPlan(tier, verify.paymentId);
-            resolve({ status: "success" });
-          } else {
-            resolve({ status: "error", message: "Payment could not be verified." });
-          }
-        },
-        modal: {
-          ondismiss: () => resolve({ status: "cancelled" }),
-        },
-      });
-      rzp.open();
-    });
+    // Send the customer to the live Razorpay payment page.
+    window.location.href = data.url;
+    return { status: "redirecting" };
   } catch (e: unknown) {
-    return { status: "error", message: e instanceof Error ? e.message : "Checkout failed" };
+    return { status: "error", message: e instanceof Error ? e.message : "Payment failed to start" };
   }
+}
+
+export type FinalizeResult =
+  | { state: "none" }
+  | { state: "success"; tier: PlanTier; method?: string }
+  | { state: "failed"; reason?: string };
+
+/**
+ * Called on app load. If we're returning from a payment, confirm it
+ * server-side and unlock Pro. Always cleans the query params from the URL.
+ */
+export async function finalizeFromRedirect(): Promise<FinalizeResult> {
+  if (typeof window === "undefined") return { state: "none" };
+
+  const params = new URLSearchParams(window.location.search);
+  const pay = params.get("pay");
+  if (!pay) return { state: "none" };
+
+  const cleanUrl = () =>
+    window.history.replaceState({}, "", window.location.pathname);
+
+  if (pay === "fail") {
+    const reason = params.get("reason") || undefined;
+    cleanUrl();
+    return { state: "failed", reason };
+  }
+
+  if (pay === "ok") {
+    const pid = params.get("pid");
+    const planId = params.get("plan");
+    cleanUrl();
+    if (!pid || !planId) return { state: "failed", reason: "missing_params" };
+
+    try {
+      const res = await fetch("/api/payment/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentId: pid, planId }),
+      });
+      const data = await res.json();
+      if (data.valid) {
+        setPlan(data.tier as PlanTier, pid);
+        return { state: "success", tier: data.tier, method: data.method };
+      }
+      return { state: "failed", reason: data.error };
+    } catch {
+      return { state: "failed", reason: "confirm_error" };
+    }
+  }
+
+  return { state: "none" };
 }

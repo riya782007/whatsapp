@@ -67,11 +67,6 @@ export default function RootLayout({
             strategy="afterInteractive"
           />
         )}
-        {/* Razorpay checkout — used by the upgrade flow */}
-        <Script
-          src="https://checkout.razorpay.com/v1/checkout.js"
-          strategy="afterInteractive"
-        />
       </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
